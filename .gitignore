@@ -1,0 +1,36 @@
+# .gitignore
+
+# Entornos virtuales y caché de Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+
+# Archivos de libros (para no saturar el repo)
+*.pdf
+*.epub
+*.mobi
+books/
+
+# Outputs gráficos y caché de UI
+*.png
+*.jpg
+.qt_cache/
+
+# Archivos auxiliares de LaTeX (Solo nos importa el .tex)
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.bbl
+*.blg
+
+# Archivos de sistema operativo (Windows)
+Thumbs.db
+Desktop.ini

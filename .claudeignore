@@ -1,0 +1,31 @@
+# .claudeignore
+
+# 1. DEPENDENCIAS Y CACHÉ (Ahorro MASIVO de tokens)
+.venv/
+venv/
+env/
+__pycache__/
+
+# 2. ARCHIVOS BINARIOS Y LIBROS (Claude gasta tokens intentando decodificarlos)
+*.pdf
+*.epub
+*.mobi
+*.png
+*.jpg
+*.jpeg
+books/
+data/
+
+# 3. BASURA DE COMPILACIÓN LATEX 
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.bbl
+*.blg
+
+# 4. CONTROL DE VERSIONES INTERNO
+.git/
