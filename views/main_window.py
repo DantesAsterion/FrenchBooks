@@ -20,6 +20,7 @@ from PyQt6.QtGui import QAction
 from views.dashboard_view import DashboardView
 from views.reader_view import ReaderView
 from models.document_model import DocumentModel, DocumentType
+# DashboardController imported lazily inside set_controller to avoid circular import
 
 
 PAGE_DASHBOARD = 0
@@ -93,7 +94,7 @@ class MainWindow(QMainWindow):
         # Dashboard → MainWindow
         self.dashboard.open_file_requested.connect(self._open_file_dialog)
         self.dashboard.open_reader_requested.connect(self._switch_to_reader)
-        self.dashboard.analyze_requested.connect(self._on_analyze_requested)
+        # analyze_requested is connected inside set_controller once the NLP engine is ready
 
         # Reader → MainWindow
         self.reader.close_reader.connect(
@@ -102,13 +103,30 @@ class MainWindow(QMainWindow):
 
     def set_controller(self, controller) -> None:
         """Inject the controller after it is constructed (spaCy loaded)."""
+        from controllers.dashboard_controller import DashboardController
+
         self.controller = controller
         self.controller.status_message.connect(self.status_bar.showMessage)
         self.controller.nlp_result_ready.connect(self.reader.update_nlp_results)
-        # page_text_ready carries the raw text the controller needs to run NLP
         self.reader.page_text_ready.connect(self.controller.on_page_text_ready)
         self.reader.page_changed.connect(self.controller.on_page_changed)
+
+        # Dashboard corpus analysis controller (LLR-17..20)
+        self.dash_controller = DashboardController(
+            controller.nlp, self.dashboard, parent=self
+        )
+        self.dash_controller.status_message.connect(self.status_bar.showMessage)
+        self.dashboard.analyze_requested.connect(
+            self._on_analyze_requested_wired
+        )
+
         self.status_bar.showMessage("NLP engine ready.")
+
+    def _on_analyze_requested_wired(self, file_path: str) -> None:
+        """Route analyze_requested to the DashboardController (not the stub)."""
+        if hasattr(self, "_active_model") and self._active_model:
+            self.dash_controller.set_model(self._active_model)
+        self.dash_controller.on_analyze_requested(file_path)
 
     # ── Slots ─────────────────────────────────────────────────────────────────
 
@@ -157,8 +175,3 @@ class MainWindow(QMainWindow):
                 self._active_model.doc_type
             )
 
-    def _on_analyze_requested(self, file_path: str) -> None:
-        self.status_bar.showMessage(
-            "Full corpus analysis not yet implemented "
-            "(feature/dynamic-nlp). Open the Reader for per-page analysis."
-        )

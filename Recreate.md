@@ -324,6 +324,9 @@ The output `Documentation.pdf` will be generated in the project root.
 | Date | Section Updated | Reason | Commit Ref |
 |---|---|---|---|
 | 2026-06-30 | All sections created | Initial documentation setup | feature/documentation-setup |
+| 2026-06-30 | Section 7 (structure) | Added MVC dirs, main.py entry point | feature/gui-architecture |
+| 2026-06-30 | No new installs needed | PyMuPDF, EbookLib, BeautifulSoup4, matplotlib all covered in Section 4 | feature/native-readers |
+| 2026-06-30 | No new installs needed | CorpusWorker + HeatmapCanvas use packages already listed in Section 4 | feature/dynamic-nlp |
 
 ---
 

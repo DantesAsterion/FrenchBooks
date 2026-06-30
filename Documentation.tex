@@ -893,6 +893,113 @@ class HeatmapCanvas(FigureCanvasQTAgg):
 \end{lstlisting}
 
 % ============================================================
+%  PART IV-B — DYNAMIC NLP (feature/dynamic-nlp)
+% ============================================================
+
+% ============================================================
+\chapter{Corpus-Level Analysis: CorpusWorker and DashboardController}
+\label{ch:corpus}
+% ============================================================
+
+\section{Per-Page vs Corpus Analysis}
+
+The application operates at two granularities of NLP:
+
+\begin{description}
+  \item[Per-page (Reader)] The \texttt{NLPWorker} (Chapter \ref{ch:threading})
+    processes only the text visible on the current page, keeping the reader
+    panel always in sync with what the user sees.
+  \item[Full-corpus (Dashboard)] The \texttt{CorpusWorker} processes every
+    page of the book in sequence, building a global picture of vocabulary,
+    verb tenses, and word frequencies.
+\end{description}
+
+\section{CorpusWorker: Processing Every Page}
+
+\begin{lstlisting}[caption={CorpusWorker iterates all pages (HLR-01, LLR-17, LLR-19, LLR-20)}]
+class CorpusWorker(QRunnable):
+    def __init__(self, nlp, page_texts: list[str]):
+        super().__init__()
+        self.nlp        = nlp
+        self.page_texts = page_texts
+        self.signals    = CorpusSignals()
+        self._cancel    = threading.Event()
+
+    def run(self) -> None:
+        freq = Counter()
+        tense_map = defaultdict(list)
+        for idx, text in enumerate(self.page_texts):
+            if self._cancel.is_set():
+                return
+            doc = self.nlp(text)
+            for token in doc:
+                if not (token.is_stop or token.is_punct):
+                    freq[token.lemma_.lower()] += 1
+                if token.pos_ in ("VERB", "AUX"):
+                    morph = token.morph.to_dict()
+                    key = (morph.get("Tense"), morph.get("Mood"),
+                           morph.get("Person"), morph.get("Number"))
+                    tense_map[key].append(token.sent.text[:80])
+            self.signals.progress.emit(idx + 1, len(self.page_texts))
+        result = CorpusResult()
+        result.vocab = [(l, c, "") for l, c in freq.most_common(500)]
+        result.word_counts = freq
+        result.tense_rows  = [(t, m, p, n, ex[0])
+                               for (t,m,p,n), ex in sorted(tense_map.items())]
+        self.signals.finished.emit(result)
+\end{lstlisting}
+
+\begin{notebox}
+The \texttt{threading.Event} cancellation flag works because Python's
+\texttt{threading} module is thread-safe for simple boolean reads. The
+\texttt{QRunnable.run()} method checks \texttt{self.\_cancel.is\_set()}
+at the start of each page loop — if the user closes the book or clicks
+"Analyze" again, the old worker exits cleanly.
+\end{notebox}
+
+\section{The HeatmapCanvas: Matplotlib Inside Qt}
+
+By default, calling \texttt{plt.show()} would open a separate OS window for the
+matplotlib chart. We use the \textbf{Qt Agg backend} to render the figure inside
+a PyQt6 widget instead (LLR-18):
+
+\begin{lstlisting}[caption={HeatmapCanvas embedded in Qt (LLR-17, LLR-18)}]
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+
+class HeatmapCanvas(FigureCanvasQTAgg):
+    def __init__(self, word_counts: Counter, top_n: int = 40, parent=None):
+        fig = Figure(figsize=(9, 3), dpi=96)
+        super().__init__(fig)
+        ax = fig.add_subplot(111)
+        words, counts = zip(*word_counts.most_common(top_n))
+        grid = np.array(counts).reshape(5, -1)
+        ax.imshow(grid, cmap="YlOrRd", aspect="auto")
+        fig.colorbar(ax.images[0], ax=ax, label="Frequency")
+        fig.tight_layout()
+        self.draw()
+\end{lstlisting}
+
+The key insight: \texttt{FigureCanvasQTAgg} is itself a \texttt{QWidget}.
+You can add it to any Qt layout just like a button or a label.
+
+\section{DashboardController Wiring}
+
+The \texttt{DashboardController} is injected into \texttt{MainWindow.set\_controller()}
+\textit{after} the spaCy model has been loaded in the background:
+
+\begin{enumerate}
+  \item \texttt{DashboardView.analyze\_requested} signal fires with the file path.
+  \item \texttt{DashboardController.on\_analyze\_requested()} extracts all page texts
+    (using fitz for PDFs, ebooklib+BeautifulSoup4 for EPUBs).
+  \item A \texttt{CorpusWorker} is dispatched to \texttt{QThreadPool}.
+  \item \texttt{CorpusSignals.finished} delivers the \texttt{CorpusResult} to
+    \texttt{DashboardController.\_on\_analysis\_done()}.
+  \item The controller calls \texttt{view.populate\_vocab()},
+    \texttt{view.populate\_tenses()}, and \texttt{view.replace\_heatmap(canvas)}.
+\end{enumerate}
+
+% ============================================================
 %  PART V — CERTIFICATION
 % ============================================================
 \part{DO-178C Certification Pipeline}
