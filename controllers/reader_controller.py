@@ -38,19 +38,29 @@ class ReaderController(QObject):
         self.model = model
         self.status_message.emit(f"Loaded: {model.title} ({model.page_count} pages)")
 
+    def on_page_text_ready(self, page_index: int, text: str) -> None:
+        """
+        Slot connected to ReaderView.page_text_ready.
+        The renderer has extracted text from a page; store it and run NLP.
+        """
+        self.model.set_page_text(page_index, text)
+        self._dispatch_nlp(page_index)
+
     def on_page_changed(self, page_index: int) -> None:
         """
-        Called by the View whenever the visible page changes (LLR-13).
-        Cancels any in-flight worker and dispatches a new one.
+        Called by the View's nav buttons (LLR-13).
+        If text is already cached, dispatch NLP; otherwise the renderer will
+        call on_page_text_ready when it finishes rendering.
         """
-        if self._active_worker:
-            self._active_worker.cancel()
-            self._active_worker = None
-
         if self.model.is_cached(page_index):
             cached_doc = self.model.get_page_nlp(page_index)
             self.nlp_result_ready.emit(page_index, cached_doc)
-            return
+
+    def _dispatch_nlp(self, page_index: int) -> None:
+        """Cancel any in-flight worker and start a new one for page_index."""
+        if self._active_worker:
+            self._active_worker.cancel()
+            self._active_worker = None
 
         text = self.model.get_page_text(page_index)
         if not text:
