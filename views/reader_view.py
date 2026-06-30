@@ -2,7 +2,7 @@
 ReaderView — MVC View layer, Split-Screen Reader (LLR-02, HLR-02, HLR-03)
 
 Left panel:  StudyGuidePanel (NLP results)
-Right panel: DocumentRenderer (PDF/EPUB content) — populated by feature/native-readers
+Right panel: PDFRenderer or EPUBRenderer depending on document type
 Navigation bar: Previous / Next page buttons + current page indicator
 """
 
@@ -14,24 +14,9 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from views.study_guide_panel import StudyGuidePanel
-
-
-class DocumentRendererPlaceholder(QWidget):
-    """
-    Placeholder for the actual PDF/EPUB renderer.
-    Replaced by the concrete renderer in feature/native-readers.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        label = QLabel(
-            "Document renderer will appear here.\n"
-            "(feature/native-readers)"
-        )
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet("color: #888; border: 1px dashed #aaa;")
-        layout.addWidget(label)
+from views.pdf_renderer import PDFRenderer
+from views.epub_renderer import EPUBRenderer
+from models.document_model import DocumentType
 
 
 class ReaderView(QWidget):
@@ -44,8 +29,9 @@ class ReaderView(QWidget):
         close_reader():      User clicked the back/close button.
     """
 
-    page_changed  = pyqtSignal(int)
-    close_reader  = pyqtSignal()
+    page_changed     = pyqtSignal(int)
+    page_text_ready  = pyqtSignal(int, str)   # (page_index, raw_text) → Controller
+    close_reader     = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -99,17 +85,12 @@ class ReaderView(QWidget):
         self.study_guide.setMinimumWidth(260)
         self.splitter.addWidget(self.study_guide)
 
-        # Divider line
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-
-        # Right — Document renderer (placeholder until native-readers branch)
+        # Right — Native document renderer (PDF or EPUB, set via open_document)
         self.renderer_container = QWidget()
         rc_layout = QVBoxLayout(self.renderer_container)
         rc_layout.setContentsMargins(0, 0, 0, 0)
-        self.renderer = DocumentRendererPlaceholder()
-        rc_layout.addWidget(self.renderer)
+        # Renderer is None until open_document() is called
+        self._renderer_widget = None
 
         self.splitter.addWidget(self.renderer_container)
         self.splitter.setSizes([300, 700])
@@ -118,22 +99,44 @@ class ReaderView(QWidget):
 
     # ── Public API called by the MainWindow / Controller ──────────────────────
 
-    def load_document(self, title: str, page_count: int) -> None:
-        """Set document metadata and reset to page 0."""
-        self._total_pages  = page_count
+    def open_document(self, file_path: str, doc_type: DocumentType) -> None:
+        """
+        Instantiate the correct renderer, open the document, and wire signals.
+        """
+        layout = self.renderer_container.layout()
+
+        # Remove and destroy the previous renderer if one exists
+        if self._renderer_widget is not None:
+            layout.removeWidget(self._renderer_widget)
+            self._renderer_widget.hide()
+            self._renderer_widget.deleteLater()
+
+        if doc_type == DocumentType.PDF:
+            renderer = PDFRenderer()
+            renderer.page_text_ready.connect(self._on_page_text_ready)
+            renderer.page_count_known.connect(self._on_page_count_known)
+            count = renderer.open_document(file_path)
+        else:
+            renderer = EPUBRenderer()
+            renderer.chapter_text_ready.connect(self._on_page_text_ready)
+            renderer.chapter_count_known.connect(self._on_page_count_known)
+            count = renderer.open_document(file_path)
+
+        self._renderer_widget = renderer
+        layout.addWidget(renderer)
+        renderer.show()
+
+        self._total_pages  = count
         self._current_page = 0
         self._update_nav()
         self.study_guide.clear()
 
-    def set_renderer(self, renderer_widget: QWidget) -> None:
-        """
-        Replace the placeholder renderer with the real PDF/EPUB widget.
-        Called by MainWindow after feature/native-readers supplies the widget.
-        """
-        layout = self.renderer_container.layout()
-        layout.replaceWidget(self.renderer, renderer_widget)
-        self.renderer.hide()
-        self.renderer = renderer_widget
+    def load_document(self, title: str, page_count: int) -> None:
+        """Legacy slot — updates nav bar metadata without re-opening a file."""
+        self._total_pages  = page_count
+        self._current_page = 0
+        self._update_nav()
+        self.study_guide.clear()
 
     def update_nlp_results(self, page_index: int, doc) -> None:
         """
@@ -149,13 +152,37 @@ class ReaderView(QWidget):
         if self._current_page > 0:
             self._current_page -= 1
             self._update_nav()
+            self._render_current()
             self.page_changed.emit(self._current_page)
 
     def _on_next(self) -> None:
         if self._current_page < self._total_pages - 1:
             self._current_page += 1
             self._update_nav()
+            self._render_current()
             self.page_changed.emit(self._current_page)
+
+    def _render_current(self) -> None:
+        """Tell the active renderer to display the current page."""
+        if self._renderer_widget is None:
+            return
+        if isinstance(self._renderer_widget, PDFRenderer):
+            self._renderer_widget.render_page(self._current_page)
+        elif isinstance(self._renderer_widget, EPUBRenderer):
+            self._renderer_widget.render_chapter(self._current_page)
+
+    def _on_page_text_ready(self, page_index: int, text: str) -> None:
+        """
+        Forwarded from the renderer. The Controller needs the text to dispatch
+        NLP. We relay via page_changed signal (Controller listens for this) but
+        also store text in the model via the controller, so we emit a dedicated
+        signal here.
+        """
+        self.page_text_ready.emit(page_index, text)
+
+    def _on_page_count_known(self, count: int) -> None:
+        self._total_pages = count
+        self._update_nav()
 
     def _update_nav(self) -> None:
         self.page_label.setText(

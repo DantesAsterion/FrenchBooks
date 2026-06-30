@@ -105,6 +105,8 @@ class MainWindow(QMainWindow):
         self.controller = controller
         self.controller.status_message.connect(self.status_bar.showMessage)
         self.controller.nlp_result_ready.connect(self.reader.update_nlp_results)
+        # page_text_ready carries the raw text the controller needs to run NLP
+        self.reader.page_text_ready.connect(self.controller.on_page_text_ready)
         self.reader.page_changed.connect(self.controller.on_page_changed)
         self.status_bar.showMessage("NLP engine ready.")
 
@@ -147,12 +149,13 @@ class MainWindow(QMainWindow):
     def _switch_to_reader(self, file_path: str) -> None:
         self.stack.setCurrentIndex(PAGE_READER)
         if hasattr(self, "_active_model"):
-            self.reader.load_document(
-                self._active_model.title,
-                self._active_model.page_count or 1
-            )
             if self.controller:
-                self.controller.on_page_changed(0)
+                self.controller.load_document(self._active_model)
+            # open_document() handles renderer creation + first page render
+            self.reader.open_document(
+                self._active_model.file_path,
+                self._active_model.doc_type
+            )
 
     def _on_analyze_requested(self, file_path: str) -> None:
         self.status_bar.showMessage(
