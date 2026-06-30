@@ -338,6 +338,12 @@ required by DO-178C Section 11 (Software Configuration Management).
 | caf0b66 | docs | setup | Add Recreate.md and Documentation.tex scaffold | HLR-07, LLR-22, LLR-23 | feature/documentation-setup |
 | bd1b2c9 | docs | setup | Merge documentation scaffold into develop | HLR-07, LLR-22, LLR-23 | develop |
 | f020bdc | feat | gui | MVC skeleton, split-screen layout, threading worker | HLR-04, HLR-05, LLR-01..03, LLR-10..16 | feature/gui-architecture |
+| 6f018d4 | docs | trace | Update traceability matrix (first pass) | HLR-07, LLR-21 | feature/gui-architecture |
+| 371e074 | feat | gui | Merge GUI architecture into develop | HLR-04, HLR-05 | develop |
+| afe0db8 | feat | reader | Native PDF and EPUB renderers implementation | HLR-02, LLR-04..09 | feature/native-readers |
+| 6f79c84 | feat | reader | Merge native-readers into develop | HLR-02 | develop |
+| a331a48 | feat | nlp | Corpus worker, heatmap canvas, dashboard controller | HLR-01, LLR-17..20 | feature/dynamic-nlp |
+| 93cd83f | feat | nlp | Merge dynamic-nlp into develop | HLR-01 | develop |
 
 ---
 
