@@ -334,7 +334,10 @@ required by DO-178C Section 11 (Software Configuration Management).
 
 | Commit SHA (short) | Type | Scope | Description | Req. ID | Branch |
 |---|---|---|---|---|---|
-| *(populated at commit time)* | | | | | |
+| e3bda6e | docs | baseline | Establish DO-178C requirements baseline and project scaffold | HLR-01..07 | master |
+| caf0b66 | docs | setup | Add Recreate.md and Documentation.tex scaffold | HLR-07, LLR-22, LLR-23 | feature/documentation-setup |
+| bd1b2c9 | docs | setup | Merge documentation scaffold into develop | HLR-07, LLR-22, LLR-23 | develop |
+| f020bdc | feat | gui | MVC skeleton, split-screen layout, threading worker | HLR-04, HLR-05, LLR-01..03, LLR-10..16 | feature/gui-architecture |
 
 ---
 
