@@ -1,10 +1,10 @@
 # Requirements.md — French Interactive Reader
 ## DO-178C Software Requirements Specification
 **Project:** FrenchBooks — Interactive French Literature Study Tool
-**Version:** 1.1.0
+**Version:** 1.2.0
 **Date:** 2026-07-05
 **Author:** AsterionDantes
-**Status:** CHANGE BASELINE — Cloze Flashcard Engine Amendment
+**Status:** CHANGE BASELINE — Batch Automation & Audiobook Mode Amendment
 
 ---
 
@@ -30,6 +30,14 @@ FrenchBooks is a Python/PyQt6 desktop application that:
 - Executes all heavy NLP work off the main GUI thread using Qt threading primitives
 - Generates context-aware, cloze-deletion flashcards from source sentences and exports
   them as Anki-compatible CSV with synthesized French audio (v1.1.0 amendment)
+- Performs automated full-book flashcard generation and exports results to a dated CSV
+  in `output/anki_exports/` without manual intervention (v1.2.0 amendment)
+- Provides an interactive audiobook mode using `edge-tts` with word-level text highlighting
+  synchronized to TTS playback (v1.2.0 amendment)
+- Detects French grammar patterns (subjunctive triggers, passé composé) and lexical
+  regionalisms via `spaCy.Matcher` and annotates them in the Study Guide panel (v1.2.0)
+- Replaces all fixed-geometry panel layouts with `QSplitter` to eliminate resize overlap
+  bugs and give the user resizable panel boundaries (v1.2.0 amendment)
 
 **Target Platform:** Windows 10 (PowerShell environment)
 **Core Language:** Python 3.x
@@ -161,6 +169,63 @@ provide audio preview controls (Play, Pause, Stop, Speed).
 **Priority:** Medium
 **Rationale:** Audio reinforcement of sentence-context cards accelerates phonological
 acquisition and is required for Anki audio-card format.
+
+---
+
+### HLR-11 — Batch Automated Corpus Processing
+The system shall process the entire loaded document automatically when "Analyze Corpus" is
+triggered on the Library Dashboard. All pages or chapters shall be processed in a single
+background pass via a dedicated service class (`FullBookProcessor`). Flashcard candidates
+shall be generated for high-frequency content words (minimum occurrence threshold
+configurable; default: 2). Upon completion the system shall automatically export all
+generated flashcard records to a UTF-8 Anki CSV file at the path:
+`output/anki_exports/<book_title>_YYYYMMDD_HHMMSS.csv`
+without requiring any manual user action beyond triggering the analysis.
+
+**Priority:** High
+**Rationale:** Manual page-by-page card creation does not scale to full novels. Full-corpus
+batch processing is the primary value proposition of the v1.2.0 upgrade.
+
+---
+
+### HLR-12 — Interactive Audiobook Mode
+The system shall synthesize French TTS audio for the text of any currently displayed page or
+chapter using `edge-tts` with the `fr-FR-DeniseNeural` neural voice, and shall play it back
+with word-level text highlighting synchronized to the TTS audio timeline. Playback controls
+(Play, Pause, Stop, and Speed: 0.5×/0.75×/1.0×/1.25×/1.5×) shall be integrated into the
+Reader view toolbar.
+
+**Priority:** High
+**Rationale:** Audiobook mode converts the reader into a full listen-along tool. Word-by-word
+highlighting combines visual and phonological input channels, accelerating decoding fluency.
+
+---
+
+### HLR-13 — Grammar and Regionalism Pattern Detection
+The system shall detect and annotate common French grammar constructions and lexical
+regionalisms within each page's NLP pass. Detection shall use `spaCy.Matcher` with patterns
+loaded from a curated JSON file. Detected patterns shall be surfaced in a dedicated section
+of the Study Guide panel. At minimum the following pattern categories shall be supported:
+- (a) Subjunctive triggers (verbs that govern subjunctive mood in the following clause)
+- (b) Passé composé constructions (auxiliary avoir/être + past participle)
+- (c) Québécois lexical items (configurable word list)
+
+**Priority:** Medium
+**Rationale:** Grammar pattern awareness converts passive reading into active grammatical
+observation, a core requirement of communicative language teaching methodology.
+
+---
+
+### HLR-14 — QSplitter-Based Resizable GUI Layout
+All primary views (`MainWindow`, `ReaderView`, `DashboardView`) shall use `QSplitter` widgets
+as the boundary between adjacent panels. Fixed-size layouts that cause panel overlap upon
+window resize shall be eliminated. Additionally, all `BeautifulSoup4` calls that parse EPUB
+HTML shall pass an explicit parser argument to eliminate `XMLParsedAsHTMLWarning` at runtime.
+
+**Priority:** High
+**Rationale:** The overlap-on-resize defect (observed with fixed `QHBoxLayout` proportions)
+degrades usability on non-standard display resolutions and is classified as a GUI robustness
+defect requiring correction before v1.2.0 release.
 
 ---
 
@@ -433,6 +498,147 @@ pattern explained in `Documentation.tex`.
 
 ---
 
+### 4.10 Batch Automated Corpus Processing (derived from HLR-11)
+
+**LLR-36**
+A `FullBookProcessor` class shall be defined in `services/full_book_processor.py`. It shall
+subclass `QObject` and own a pool of `NLPWorker` instances dispatched via
+`QThreadPool.globalInstance()`. It shall accept the loaded `DocumentModel` and the spaCy
+`nlp` pipeline as constructor arguments. Signals shall include:
+- `progress = pyqtSignal(int, int)` — `(pages_done, total_pages)` emitted after each page
+- `finished = pyqtSignal(list)` — `list[FlashcardRecord]` emitted when all pages complete
+- `status_message = pyqtSignal(str)` — human-readable progress description
+*Parent: HLR-11, HLR-04, HLR-05*
+
+**LLR-37**
+`FullBookProcessor` shall accept a `min_frequency: int` parameter (default `2`). After
+processing all pages, it shall count lemma occurrences across the full corpus and only
+generate `FlashcardRecord` instances for lemmas that occur at least `min_frequency` times,
+filtering out proper nouns (`token.pos_ == "PROPN"`) and punctuation-only tokens.
+*Parent: HLR-11, HLR-08*
+
+**LLR-38**
+When `FullBookProcessor.finished` is emitted, `MainWindow` shall automatically call
+`FlashcardService.export_csv()` targeting the path:
+`output/anki_exports/<doc_title>_<YYYYMMDD_HHMMSS>.csv`
+where `<doc_title>` is derived from `DocumentModel.title` with spaces replaced by
+underscores and all characters that are invalid in Windows filenames removed. The output
+directory shall be created via `pathlib.Path.mkdir(parents=True, exist_ok=True)`.
+*Parent: HLR-11, HLR-09, LLR-27*
+
+**LLR-39**
+The Dashboard "Analyze Corpus" button shall be enhanced to trigger `FullBookProcessor`.
+A `QProgressBar` shall be displayed in the Dashboard while batch processing is running,
+updated on each `progress(current, total)` signal. The progress bar shall be hidden and the
+auto-export status message displayed upon completion.
+*Parent: HLR-11, HLR-04*
+
+---
+
+### 4.11 Interactive Audiobook Mode (derived from HLR-12)
+
+**LLR-40**
+An `AudiobookController` class shall be defined in `controllers/audiobook_controller.py`.
+It shall use `edge-tts` with the voice `fr-FR-DeniseNeural` to synthesize the current
+page/chapter text. `edge-tts` shall be invoked via `asyncio.run()` inside an
+`AudiobookWorker(QRunnable)` to avoid blocking the GUI thread. The worker shall store word
+boundary events returned by `edge-tts` as a list of `(word: str, start_ms: int, end_ms: int)`
+tuples, emitting the full list via `boundaries_ready = pyqtSignal(list)` upon synthesis
+completion.
+*Parent: HLR-12, HLR-04*
+
+**LLR-41**
+`AudiobookController` shall instantiate a `QTimer` (interval: 100 ms) that fires during
+playback. On each tick it shall call `QMediaPlayer.position()` and binary-search the
+`boundaries` list to find the word whose `[start_ms, end_ms)` interval contains the current
+position. It shall emit `word_highlight_requested = pyqtSignal(int, int)` carrying the
+`(start_char, end_char)` character indices of that word within the original page text. The
+timer shall start on playback begin and stop on pause or stop.
+*Parent: HLR-12*
+
+**LLR-42**
+`ReaderView` shall connect to `AudiobookController.word_highlight_requested(start_char,
+end_char)`. For PDF documents, it shall overlay a semi-transparent `QRubberBand` (or
+`QLabel` with a highlight stylesheet) at the character's bounding box obtained from
+`fitz.Page.search_for()`. For EPUB documents, it shall call
+`QWebEngineView.page().runJavaScript()` to inject a `<mark>` or CSS highlight around the
+matched word in the rendered HTML.
+*Parent: HLR-12, HLR-02*
+
+**LLR-43**
+Audiobook playback controls — Play, Pause, Stop, and a Speed `QComboBox`
+(0.5×/0.75×/1.0×/1.25×/1.5×) — shall be added as a persistent toolbar row at the bottom
+of `ReaderView`, visible at all times. These controls shall be wired to
+`AudiobookController.play()`, `pause()`, `stop()`, and `set_speed(rate: float)` respectively.
+*Parent: HLR-12*
+
+---
+
+### 4.12 Grammar and Regionalism Pattern Detection (derived from HLR-13)
+
+**LLR-44**
+A `PatternLibrary` class shall be defined in `services/pattern_library.py`. Its constructor
+shall load `assets/patterns/grammar_patterns.json`, which shall define a list of named
+pattern entries, each with fields: `name` (str), `description` (str), `patterns`
+(list of spaCy Matcher pattern dicts). On load, all patterns shall be registered with a
+`spacy.matcher.Matcher` instance initialized with the nlp vocabulary.
+*Parent: HLR-13, HLR-06*
+
+**LLR-45**
+`grammar_patterns.json` shall include at minimum the following named patterns at initial
+delivery:
+- `subjonctif_trigger` — verbs that commonly trigger subjunctive (e.g. vouloir, falloir,
+  craindre) followed by "que"
+- `passe_compose_avoir` — "avoir" AUX + VERB past participle
+- `passe_compose_etre` — "être" AUX + VERB past participle
+- `quebecois_items` — at least 20 common Québécois lexical items drawn from the Office
+  québécois de la langue française word list
+*Parent: HLR-13, LLR-44*
+
+**LLR-46**
+The `NLPWorker.run()` method shall invoke `PatternLibrary.find_matches(doc)` after the
+spaCy pipeline processes the page. `find_matches(doc)` shall return a list of
+`PatternMatch` namedtuples: `(pattern_name: str, matched_text: str, description: str,
+start_token: int, end_token: int)`. This list shall be included in the signal payload
+emitted to the GUI thread alongside the spaCy Doc.
+*Parent: HLR-13, HLR-04, LLR-10*
+
+**LLR-47**
+`StudyGuidePanel` shall include a third collapsible section titled "Grammar Patterns &
+Regionalisms". When pattern matches are present, the section shall display a `QListWidget`
+with one item per match showing: `[pattern_name] matched_text — description`. When no
+matches are found the section shall display a `QLabel` "No patterns detected on this page."
+*Parent: HLR-13, HLR-03*
+
+---
+
+### 4.13 QSplitter Layout and BeautifulSoup Fix (derived from HLR-14)
+
+**LLR-48**
+`ReaderView` shall be refactored to use `QSplitter(Qt.Orientation.Horizontal)` as its
+top-level layout divider. `StudyGuidePanel` shall occupy the left pane and the document
+renderer (`QScrollArea` for PDF or `QWebEngineView` for EPUB) shall occupy the right pane.
+The default splitter handle position shall produce a 30/70 split (study guide / document).
+*Parent: HLR-14*
+
+**LLR-49**
+`DashboardView` shall be refactored to use a `QSplitter(Qt.Orientation.Horizontal)` dividing
+the book list panel (left, ~25% of width) from the analysis `QTabWidget` (right, ~75%). The
+corpus analysis tab shall itself use a `QSplitter(Qt.Orientation.Vertical)` to divide the
+vocabulary table (top) from the tense table (bottom), with the heatmap displayed below the
+tense table.
+*Parent: HLR-14*
+
+**LLR-50**
+All calls to `BeautifulSoup(content, ...)` in `views/epub_renderer.py` and
+`controllers/dashboard_controller.py` shall be updated to pass an explicit parser string as
+the second positional argument. The value shall be `"lxml"` (falling back to `"html.parser"`
+if `lxml` is not installed). This change eliminates the `XMLParsedAsHTMLWarning` that is
+emitted at runtime during EPUB document analysis.
+*Parent: HLR-02, LLR-07, LLR-08*
+
+---
+
 ## 5. GitFlow Workflow Definition
 
 ### 5.1 Branch Taxonomy
@@ -496,6 +702,8 @@ required by DO-178C Section 11 (Software Configuration Management).
 | 391e762 | docs | setup | gTTS dep, edge-tts alternative, cloze-deletion chapter | HLR-07, LLR-22, LLR-23, LLR-35 | feature/cloze-flashcard-engine |
 | 51d4f8c | feat | flashcard | FlashcardService, AudioWorker, AudioController | HLR-08..10, LLR-24..31 | feature/cloze-flashcard-engine |
 | 0080d7f | feat | gui | FlashcardManagerPanel, right-click creation, tab wiring | HLR-08..10, LLR-32..34 | feature/cloze-flashcard-engine |
+| e6bce49 | feat | flashcard | Cloze engine, Anki CSV export, gTTS audio (merge) | HLR-08..10, LLR-24..35 | develop |
+| — | tag | — | v1.1.0-stable annotated tag on develop (config control baseline) | HLR-07 | develop |
 
 ---
 
@@ -513,7 +721,12 @@ required by DO-178C Section 11 (Software Configuration Management).
 | LLR-29/30 | Manual test — synthesize audio with network disconnected | AudioWorker emits error signal; card Audio column remains empty |
 | LLR-31 | Code inspection + manual test | AudioController plays MP3 without blocking GUI |
 | LLR-33 | Manual test — open Flashcard Manager tab | Table shows all cards; Export and Delete buttons functional |
+| LLR-36..39 | Manual test — click "Analyze Corpus" on a loaded book | Progress bar advances; CSV auto-exported to `output/anki_exports/`; card count matches high-frequency lemmas |
+| LLR-40..42 | Manual test — activate Audiobook mode on a loaded page | Audio plays; word highlight advances in sync with TTS timeline at all speed settings |
+| LLR-44..47 | Manual test — navigate to a page containing "vouloir que" | Grammar Patterns section shows `subjonctif_trigger` match with description |
+| LLR-48..49 | Manual test — resize MainWindow to 50% of original width | No panel overlap; splitter handles remain draggable |
+| LLR-50 | Code inspection + runtime log | No `XMLParsedAsHTMLWarning` appears in console during EPUB analysis |
 
 ---
 
-*End of Requirements.md v1.1.0 — CHANGE BASELINE (Cloze Flashcard Engine)*
+*End of Requirements.md v1.2.0 — CHANGE BASELINE (Batch Automation & Audiobook Mode Amendment)*
