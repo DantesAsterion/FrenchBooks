@@ -215,10 +215,37 @@ used as the backend for BeautifulSoup4.
 
 **Version installed during baseline:** beautifulsoup4 >= 4.12, lxml >= 5.0
 
-### 4.9 Install All Packages in One Command (shortcut)
+### 4.9 Text-to-Speech — gTTS (primary TTS engine, LLR-29, LLR-35)
 
 ```powershell
-pip install PyQt6 PyQt6-WebEngine PyMuPDF ebooklib spacy matplotlib pandas beautifulsoup4 lxml
+pip install gTTS
+```
+
+`gTTS` (Google Text-to-Speech) converts a text string to an MP3 file by calling the
+Google Translate TTS endpoint. It requires an active internet connection at synthesis
+time. The synthesized MP3 files are saved locally.
+
+**Version installed during baseline:** gTTS >= 2.5
+
+> **Network failure behaviour (LLR-30):** If the internet is unavailable, `gTTS` raises
+> `gtts.tts.gTTSError`. The `AudioWorker` catches this, emits an `error` signal, and
+> leaves `record.audio_path` empty. The flashcard remains valid; the Anki CSV Audio
+> column will be empty for that card.
+
+### 4.10 Text-to-Speech — edge-tts (optional, higher quality, LLR-35)
+
+```powershell
+pip install edge-tts
+```
+
+`edge-tts` uses the Microsoft Edge TTS neural voices (e.g. `fr-FR-DeniseNeural`).
+It is asynchronous — call it with `asyncio.run()` inside the background worker thread.
+Produces noticeably better audio than gTTS at the cost of a slightly longer API call.
+
+### 4.11 Install All Packages in One Command (shortcut)
+
+```powershell
+pip install PyQt6 PyQt6-WebEngine PyMuPDF ebooklib spacy matplotlib pandas beautifulsoup4 lxml gTTS
 ```
 
 ---
@@ -327,6 +354,7 @@ The output `Documentation.pdf` will be generated in the project root.
 | 2026-06-30 | Section 7 (structure) | Added MVC dirs, main.py entry point | feature/gui-architecture |
 | 2026-06-30 | No new installs needed | PyMuPDF, EbookLib, BeautifulSoup4, matplotlib all covered in Section 4 | feature/native-readers |
 | 2026-06-30 | No new installs needed | CorpusWorker + HeatmapCanvas use packages already listed in Section 4 | feature/dynamic-nlp |
+| 2026-07-05 | Section 4.9, 4.10, 4.11 added | gTTS (primary TTS) and edge-tts (optional) for audio flashcards | feature/cloze-flashcard-engine |
 
 ---
 
