@@ -1000,6 +1000,247 @@ The \texttt{DashboardController} is injected into \texttt{MainWindow.set\_contro
 \end{enumerate}
 
 % ============================================================
+%  PART IV-C — CLOZE FLASHCARD ENGINE (feature/cloze-flashcard-engine)
+% ============================================================
+
+% ============================================================
+\chapter{Cognitive Load and Memory Retention: Implementing Cloze Deletion}
+\label{ch:cloze}
+% ============================================================
+
+\section{The Science: Why Full-Sentence Context Beats Word Lists}
+
+Consider two ways to study the French verb \textit{s'évanouir} (to faint):
+
+\begin{description}
+  \item[Method A — Isolated pair] \hfill \\
+    Front: \textit{s'évanouir} \quad Back: to faint
+
+  \item[Method B — Cloze deletion] \hfill \\
+    Front: \textit{``Elle \_\_\_\_\_ en voyant le sang.''}
+    (``She \_\_\_\_\_ upon seeing the blood.'') \\
+    Back: \textit{s'évanouir — to faint}
+\end{description}
+
+Method B is demonstrably superior. Several decades of cognitive-science research explain
+why:
+
+\begin{enumerate}
+  \item \textbf{The Generation Effect (Slamecka \& Graf, 1978).} When learners must
+    \textit{generate} the missing word from context clues rather than simply reading it,
+    encoding is deeper and recall is more durable.
+
+  \item \textbf{The Context Effect (Craik \& Tulving, 1975).} Words learned in rich
+    sentence contexts are encoded with more associative cues. At retrieval time, the
+    surrounding words act as additional pathways back to the target.
+
+  \item \textbf{Input Hypothesis (Krashen, 1985).} Comprehensible input — real sentences
+    from real texts that are \textit{just slightly} above the learner's current level —
+    is the primary mechanism of language acquisition.
+
+  \item \textbf{Spaced Repetition Amplification.} Anki's SM-2 spaced-repetition algorithm
+    schedules reviews just before you are predicted to forget. When each card already
+    encodes a sentence (not just a word), each review is simultaneously a reading
+    comprehension and vocabulary exercise.
+\end{enumerate}
+
+\begin{notebox}
+The term ``cloze'' comes from the psychological concept of \textbf{closure} —
+the mind's tendency to complete incomplete patterns. Wilson Taylor coined the term
+in 1953 for his procedure of deleting every $n$th word from a passage and asking
+readers to fill in the blanks as a measure of reading comprehension.
+\end{notebox}
+
+\section{Extracting Sentences with spaCy: The \texttt{token.sent} Span}
+
+When spaCy processes text with a pipeline that includes a dependency parser or sentence
+segmenter (both included in \texttt{fr\_core\_news\_md}), it adds sentence boundary
+annotations. The resulting \texttt{Doc} object is partitioned into \texttt{Span} objects
+accessible via \texttt{doc.sents}.
+
+Every token inside a sentence-annotated Doc exposes its enclosing sentence directly:
+
+\begin{lstlisting}[caption={Extracting a sentence from a spaCy token (LLR-25)}]
+import spacy
+
+nlp = spacy.load("fr_core_news_md")
+doc = nlp("Elle s'évanouit en voyant le sang. Il appela une ambulance.")
+
+for token in doc:
+    if token.text == "s'évanouit":
+        sentence = token.sent        # this is a spaCy Span object
+        print(sentence.text)
+        # Output: "Elle s'évanouit en voyant le sang."
+
+        cloze = sentence.text.replace(token.text, "_____", 1)
+        print(cloze)
+        # Output: "Elle _____ en voyant le sang."
+\end{lstlisting}
+
+\begin{warnbox}
+Always check \texttt{doc.has\_annotation("SENT\_START")} before calling
+\texttt{token.sent} (LLR-34). If sentence segmentation was not run (e.g.
+the pipeline was loaded with \texttt{exclude=["parser"]}), accessing
+\texttt{token.sent} raises a \texttt{ValueError}.
+\end{warnbox}
+
+\section{The FlashcardService}
+
+The \texttt{FlashcardService} class in \texttt{services/flashcard\_service.py} is the
+domain model for all flashcard data. Following the MVC pattern (Chapter~\ref{ch:mvc}),
+it has zero PyQt6 imports — it is pure Python.
+
+\begin{lstlisting}[caption={FlashcardRecord and FlashcardService skeleton (LLR-24, LLR-26)}]
+from dataclasses import dataclass, field
+from pathlib import Path
+import csv
+
+@dataclass
+class FlashcardRecord:
+    word:           str
+    lemma:          str
+    sentence:       str      # original full sentence
+    cloze_sentence: str      # sentence with target word replaced by "_____"
+    definition:     str = ""
+    audio_path:     str = ""
+    source_file:    str = ""
+    page_index:     int = 0
+
+class FlashcardService:
+    def __init__(self, audio_dir: str = "flashcards/audio"):
+        self._cards: list[FlashcardRecord] = []
+        self._audio_dir = Path(audio_dir)
+        self._audio_dir.mkdir(parents=True, exist_ok=True)
+
+    def add_card(self, word, lemma, sentence, cloze, source_file,
+                 page_index, definition="") -> FlashcardRecord:
+        record = FlashcardRecord(word=word, lemma=lemma, sentence=sentence,
+                                 cloze_sentence=cloze, definition=definition,
+                                 source_file=source_file, page_index=page_index)
+        self._cards.append(record)
+        return record
+
+    def export_csv(self, path: str) -> None:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f, delimiter=";")
+            writer.writerow(["Front", "Back", "Audio"])
+            for card in self._cards:
+                back  = f"{card.word} — {card.definition}" if card.definition else card.word
+                audio = f"[sound:{Path(card.audio_path).name}]" if card.audio_path else ""
+                writer.writerow([card.cloze_sentence, back, audio])
+\end{lstlisting}
+
+\section{The Anki CSV Format Explained}
+
+Anki's import system reads CSV files where each row is one card. We use the
+\textbf{Basic (and reversed card)} note type, but the same format also works with
+the \textbf{Cloze} note type. Our three columns map to Anki fields:
+
+\begin{table}[H]
+\centering
+\caption{Anki CSV column mapping (LLR-27)}
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+\textbf{CSV Column} & \textbf{Anki Field} & \textbf{Example} \\
+\midrule
+Front & Question & \textit{``Elle \_\_\_\_\_ en voyant le sang.''} \\
+Back  & Answer   & \textit{s'évanouir — to faint} \\
+Audio & Extra    & \texttt{[sound:card\_evanouit\_3f2a.mp3]} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The \texttt{[sound:filename]} syntax is Anki's media tag. When Anki encounters it in
+any field, it automatically plays the referenced audio file (which must be in Anki's
+\texttt{collection.media} folder).
+
+\section{gTTS: French Audio Synthesis}
+
+\texttt{gTTS} (Google Text-to-Speech) wraps the same TTS engine used by Google
+Translate. It is synchronous, simple, and produces acceptable audio quality for French:
+
+\begin{lstlisting}[caption={gTTS usage (LLR-29)}]
+from gtts import gTTS
+
+tts = gTTS(text="Elle s'évanouit en voyant le sang.", lang="fr", slow=False)
+tts.save("output.mp3")
+# output.mp3 is now a standard MP3 file playable in any audio player
+\end{lstlisting}
+
+The \texttt{slow=False} parameter uses the normal speech rate. Setting
+\texttt{slow=True} produces a slower, clearer pronunciation — useful for beginners.
+
+\begin{warnbox}
+\textbf{gTTS requires an internet connection.} It sends the text to Google's servers.
+Never call it on the main GUI thread — always use an \texttt{AudioWorker} (LLR-29).
+If the network call fails, the \texttt{AudioWorker} catches the exception, emits an
+\texttt{error} signal, and leaves the card's \texttt{audio\_path} empty (LLR-30).
+\end{warnbox}
+
+\subsection{Optional: edge-tts (Higher Quality Neural Voices)}
+
+\texttt{edge-tts} provides access to Microsoft's Azure neural TTS voices, including
+\texttt{fr-FR-DeniseNeural} — a high-quality female French voice. It is asynchronous:
+
+\begin{lstlisting}[caption={edge-tts usage (async, LLR-35)}]
+import asyncio, edge_tts
+
+async def synthesize(text: str, output_path: str) -> None:
+    comm = edge_tts.Communicate(text, voice="fr-FR-DeniseNeural")
+    await comm.save(output_path)
+
+# Inside AudioWorker.run() (background thread):
+asyncio.run(synthesize(self.text, self.output_path))
+\end{lstlisting}
+
+\section{AudioController: Thread-Safe Playback}
+
+The \texttt{AudioController} wraps Qt's \texttt{QMediaPlayer} and manages the synthesis
+queue. \texttt{QMediaPlayer} is the standard Qt audio playback class:
+
+\begin{lstlisting}[caption={AudioController playback controls (LLR-31)}]
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PyQt6.QtCore import QUrl
+
+class AudioController(QObject):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._player = QMediaPlayer()
+        self._output = QAudioOutput()
+        self._player.setAudioOutput(self._output)
+
+    def play(self, file_path: str) -> None:
+        self._player.setSource(QUrl.fromLocalFile(file_path))
+        self._player.play()
+
+    def set_playback_rate(self, rate: float) -> None:
+        self._player.setPlaybackRate(rate)  # 0.5 = half speed, 2.0 = double
+\end{lstlisting}
+
+\section{The Flashcard Manager Panel}
+
+The \texttt{FlashcardManagerPanel} is a \texttt{QWidget} added as a tab to the
+Dashboard's \texttt{QTabWidget}. It provides the complete user-facing interface for
+managing, previewing, and exporting flashcards.
+
+\begin{figure}[H]
+\centering
+\fbox{\parbox{0.85\textwidth}{\centering
+  \textbf{[Flashcard Manager Layout]} \\[0.5em]
+  \begin{tabular}{|p{0.38\textwidth}|p{0.08\textwidth}|p{0.10\textwidth}|p{0.16\textwidth}|}
+  \hline
+  Cloze Sentence & Word & Lemma & Audio \\ \hline
+  Elle \_\_\_\_\_ en voyant & s'évanouit & s'évanouir & Ready \\
+  Il \_\_\_\_\_ la porte & ouvrit & ouvrir & Pending \\
+  \hline
+  \end{tabular} \\[0.5em]
+  [Synthesize Audio] [Export CSV...] [Delete Selected] \\
+  [Play] [Pause] [Stop] \quad Speed: [1.0x ▼]
+}}
+\caption{Flashcard Manager Panel layout (LLR-33)}
+\end{figure}
+
+% ============================================================
 %  PART V — CERTIFICATION
 % ============================================================
 \part{DO-178C Certification Pipeline}

@@ -9,10 +9,12 @@ after corpus analysis is complete.
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QSplitter, QTableWidget,
-    QTableWidgetItem, QHeaderView, QFileDialog, QFrame
+    QTableWidgetItem, QHeaderView, QFileDialog, QFrame, QTabWidget
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
+
+from views.flashcard_manager import FlashcardManagerPanel
 
 
 class DashboardView(QWidget):
@@ -67,13 +69,15 @@ class DashboardView(QWidget):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         root.addWidget(sep)
 
-        # ── Right: analysis panels ───────────────────────────────────────────
-        right_splitter = QSplitter(Qt.Orientation.Vertical)
+        # ── Right: tab widget containing Analysis + Flashcards ─────────────────
+        right_container = QWidget()
+        rc_layout = QVBoxLayout(right_container)
+        rc_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Action bar
+        # Action bar (above the tabs, always visible)
         action_bar = QWidget()
         ab_layout = QHBoxLayout(action_bar)
-        ab_layout.setContentsMargins(0, 0, 0, 0)
+        ab_layout.setContentsMargins(0, 0, 0, 4)
         self.book_title_label = QLabel("Select a book from the library.")
         tf = QFont(); tf.setItalic(True)
         self.book_title_label.setFont(tf)
@@ -86,13 +90,17 @@ class DashboardView(QWidget):
         self.read_btn.setEnabled(False)
         self.read_btn.clicked.connect(self._on_read_clicked)
         ab_layout.addWidget(self.read_btn)
-        right_splitter.addWidget(action_bar)
+        rc_layout.addWidget(action_bar)
 
-        # Vocabulary table (LLR-20)
-        vocab_container = QWidget()
-        vc = QVBoxLayout(vocab_container)
-        vc.setContentsMargins(0, 0, 0, 0)
-        vc.addWidget(QLabel("Vocabulary List (sorted by frequency):"))
+        # Tab widget
+        self.tab_widget = QTabWidget()
+
+        # ── Tab 1: Corpus Analysis ────────────────────────────────────────────
+        analysis_tab = QWidget()
+        at_layout = QVBoxLayout(analysis_tab)
+        at_layout.setContentsMargins(4, 4, 4, 4)
+
+        at_layout.addWidget(QLabel("Vocabulary List (sorted by frequency):"))
         self.vocab_table = QTableWidget(0, 3)
         self.vocab_table.setHorizontalHeaderLabels(["Lemma", "Frequency", "POS"])
         self.vocab_table.horizontalHeader().setSectionResizeMode(
@@ -100,14 +108,9 @@ class DashboardView(QWidget):
         )
         self.vocab_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.vocab_table.setAlternatingRowColors(True)
-        vc.addWidget(self.vocab_table)
-        right_splitter.addWidget(vocab_container)
+        at_layout.addWidget(self.vocab_table, stretch=2)
 
-        # Tense summary table (LLR-19)
-        tense_container = QWidget()
-        tc = QVBoxLayout(tense_container)
-        tc.setContentsMargins(0, 0, 0, 0)
-        tc.addWidget(QLabel("Grammatical Tense Summary:"))
+        at_layout.addWidget(QLabel("Grammatical Tense Summary:"))
         self.tense_table = QTableWidget(0, 5)
         self.tense_table.setHorizontalHeaderLabels(
             ["Tense", "Mood", "Person", "Number", "Example"]
@@ -117,10 +120,8 @@ class DashboardView(QWidget):
         )
         self.tense_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.tense_table.setAlternatingRowColors(True)
-        tc.addWidget(self.tense_table)
-        right_splitter.addWidget(tense_container)
+        at_layout.addWidget(self.tense_table, stretch=1)
 
-        # Heatmap placeholder (replaced by HeatmapCanvas after LLR-17/18 impl)
         self.heatmap_placeholder = QLabel(
             "Word frequency heatmap will appear here after corpus analysis."
         )
@@ -128,10 +129,16 @@ class DashboardView(QWidget):
         self.heatmap_placeholder.setStyleSheet(
             "border: 1px dashed #aaa; color: #888; min-height: 120px;"
         )
-        right_splitter.addWidget(self.heatmap_placeholder)
+        at_layout.addWidget(self.heatmap_placeholder, stretch=1)
 
-        right_splitter.setSizes([40, 200, 150, 120])
-        root.addWidget(right_splitter, stretch=1)
+        self.tab_widget.addTab(analysis_tab, "Corpus Analysis")
+
+        # ── Tab 2: Flashcard Manager (LLR-33) ────────────────────────────────
+        self.flashcard_panel = FlashcardManagerPanel()
+        self.tab_widget.addTab(self.flashcard_panel, "Flashcards")
+
+        rc_layout.addWidget(self.tab_widget, stretch=1)
+        root.addWidget(right_container, stretch=1)
 
     # ── Public API ────────────────────────────────────────────────────────────
 

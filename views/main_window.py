@@ -104,6 +104,8 @@ class MainWindow(QMainWindow):
     def set_controller(self, controller) -> None:
         """Inject the controller after it is constructed (spaCy loaded)."""
         from controllers.dashboard_controller import DashboardController
+        from controllers.audio_controller import AudioController
+        from services.flashcard_service import FlashcardService
 
         self.controller = controller
         self.controller.status_message.connect(self.status_bar.showMessage)
@@ -116,17 +118,109 @@ class MainWindow(QMainWindow):
             controller.nlp, self.dashboard, parent=self
         )
         self.dash_controller.status_message.connect(self.status_bar.showMessage)
-        self.dashboard.analyze_requested.connect(
-            self._on_analyze_requested_wired
-        )
+        self.dashboard.analyze_requested.connect(self._on_analyze_requested_wired)
+
+        # Flashcard service and audio controller (HLR-08, HLR-09, HLR-10)
+        self.flashcard_service = FlashcardService()
+        self.audio_controller  = AudioController(parent=self)
+        self.audio_controller.status_message.connect(self.status_bar.showMessage)
+        self._wire_flashcard_signals()
 
         self.status_bar.showMessage("NLP engine ready.")
 
+    def _wire_flashcard_signals(self) -> None:
+        """Connect the StudyGuidePanel and FlashcardManagerPanel to service/audio layers."""
+        fc_panel = self.dashboard.flashcard_panel
+
+        # Study Guide → FlashcardService (LLR-32)
+        self.reader.study_guide.add_to_flashcard_requested.connect(
+            self._on_add_to_flashcard
+        )
+
+        # FlashcardManagerPanel → service/audio (LLR-33)
+        fc_panel.synthesize_requested.connect(self._on_synthesize_card)
+        fc_panel.export_requested.connect(self._on_export_csv)
+        fc_panel.delete_requested.connect(self._on_delete_cards)
+
+        # Audio preview controls → AudioController (LLR-32)
+        fc_panel.play_requested.connect(self.audio_controller.play)
+        fc_panel.pause_requested.connect(self.audio_controller.pause)
+        fc_panel.stop_requested.connect(self.audio_controller.stop)
+        fc_panel.speed_changed.connect(self.audio_controller.set_playback_rate)
+
+        # AudioController → FlashcardManagerPanel
+        self.audio_controller.synthesis_done.connect(self._on_audio_done)
+        self.audio_controller.synthesis_error.connect(self._on_audio_error)
+
     def _on_analyze_requested_wired(self, file_path: str) -> None:
-        """Route analyze_requested to the DashboardController (not the stub)."""
         if hasattr(self, "_active_model") and self._active_model:
             self.dash_controller.set_model(self._active_model)
         self.dash_controller.on_analyze_requested(file_path)
+
+    def _on_add_to_flashcard(
+        self, word: str, lemma: str, sentence: str, cloze: str
+    ) -> None:
+        """
+        Slot connected to StudyGuidePanel.add_to_flashcard_requested (LLR-32).
+        Creates the card and immediately shows it in the manager panel.
+        """
+        source = getattr(
+            getattr(self, "_active_model", None), "file_path", ""
+        )
+        page = getattr(self.reader, "_current_page", 0)
+        record = self.flashcard_service.add_card(
+            word=word, lemma=lemma, sentence=sentence,
+            cloze_sentence=cloze, source_file=source, page_index=page,
+        )
+        self.dashboard.flashcard_panel.add_card(
+            word=record.word, lemma=record.lemma,
+            cloze=record.cloze_sentence, definition=record.definition,
+            source_file=record.source_file,
+        )
+        # Switch to Flashcards tab so the user sees the newly added card
+        self.dashboard.tab_widget.setCurrentIndex(1)
+        self.stack.setCurrentIndex(PAGE_DASHBOARD)
+        self.status_bar.showMessage(
+            f"Flashcard added: '{word}' — {len(self.flashcard_service)} card(s) total."
+        )
+
+    def _on_synthesize_card(self, card_index: int) -> None:
+        cards = self.flashcard_service.get_cards()
+        if card_index >= len(cards):
+            return
+        record = cards[card_index]
+        output_path = str(self.flashcard_service.audio_path_for(record))
+        self.audio_controller.synthesize(record.sentence, output_path)
+
+    def _on_audio_done(self, text: str, path: str) -> None:
+        """Match synthesized audio back to the correct card and update the table."""
+        cards = self.flashcard_service.get_cards()
+        for idx, card in enumerate(cards):
+            if card.sentence == text:
+                self.flashcard_service.update_audio_path(idx, path)
+                self.dashboard.flashcard_panel.mark_audio_ready(idx, path)
+                break
+
+    def _on_audio_error(self, text: str, msg: str) -> None:
+        cards = self.flashcard_service.get_cards()
+        for idx, card in enumerate(cards):
+            if card.sentence == text:
+                self.dashboard.flashcard_panel.mark_audio_error(idx)
+                break
+
+    def _on_export_csv(self, path: str) -> None:
+        try:
+            self.flashcard_service.export_csv(path)
+            self.status_bar.showMessage(
+                f"Exported {len(self.flashcard_service)} cards to {path}"
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", str(exc))
+
+    def _on_delete_cards(self, indices: list) -> None:
+        for idx in sorted(indices, reverse=True):
+            self.flashcard_service.delete_card(idx)
+        self.dashboard.flashcard_panel.remove_rows(indices)
 
     # ── Slots ─────────────────────────────────────────────────────────────────
 

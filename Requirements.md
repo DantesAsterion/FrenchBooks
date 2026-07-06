@@ -1,10 +1,10 @@
 # Requirements.md — French Interactive Reader
 ## DO-178C Software Requirements Specification
 **Project:** FrenchBooks — Interactive French Literature Study Tool
-**Version:** 1.0.0
-**Date:** 2026-06-30
+**Version:** 1.1.0
+**Date:** 2026-07-05
 **Author:** AsterionDantes
-**Status:** BASELINE
+**Status:** CHANGE BASELINE — Cloze Flashcard Engine Amendment
 
 ---
 
@@ -28,6 +28,8 @@ FrenchBooks is a Python/PyQt6 desktop application that:
 - Provides a split-screen reader where the right panel shows the live document and the left
   panel shows a dynamically-updating NLP study guide for the current page
 - Executes all heavy NLP work off the main GUI thread using Qt threading primitives
+- Generates context-aware, cloze-deletion flashcards from source sentences and exports
+  them as Anki-compatible CSV with synthesized French audio (v1.1.0 amendment)
 
 **Target Platform:** Windows 10 (PowerShell environment)
 **Core Language:** Python 3.x
@@ -118,6 +120,47 @@ Every software change shall be:
 **Priority:** High
 **Rationale:** Traceability is a fundamental DO-178C obligation. No change is considered
 complete until documentation is updated.
+
+---
+
+### HLR-08 — Contextual (Cloze-Deletion) Flashcard Engine
+The system shall generate cloze-deletion flashcards from source document text. Each card
+shall present the **complete sentence** in which a target word appears (extracted via the
+spaCy `token.sent` span), with the target word replaced by a blank, as the card "Front".
+The word's lemma and user-provided or auto-generated definition shall form the card "Back".
+Users shall be able to create cards from any token in the Study Guide panel via a
+right-click context menu.
+
+**Priority:** High
+**Rationale:** Cognitive science research (Wittrock, 1992; Nation, 2001) establishes that
+sentence-context (cloze-format) exposure produces significantly stronger vocabulary
+retention than isolated word-translation pairs.
+
+---
+
+### HLR-09 — Anki Export Compatibility
+The system shall export the in-memory flashcard collection as a UTF-8 encoded,
+semicolon-delimited CSV file directly importable into Anki. Each row shall contain the
+cloze sentence (Front), the word and definition (Back), and an Anki audio media tag
+(`[sound:<file.mp3>]`) in the Audio column. The exported CSV shall require no manual
+reformatting before Anki import.
+
+**Priority:** High
+**Rationale:** Anki is the dominant spaced-repetition platform. Direct compatibility
+eliminates the friction of manual card creation.
+
+---
+
+### HLR-10 — French Text-to-Speech Audio Synthesis
+The system shall synthesize native-sounding French audio for flashcard sentences using
+`gTTS` (Google Text-to-Speech) as the primary engine. Each synthesized file shall be
+saved as an MP3 in a designated output directory. Audio synthesis shall be dispatched in
+a background thread consistent with HLR-04. The Dashboard Flashcard Manager panel shall
+provide audio preview controls (Play, Pause, Stop, Speed).
+
+**Priority:** Medium
+**Rationale:** Audio reinforcement of sentence-context cards accelerates phonological
+acquisition and is required for Anki audio-card format.
 
 ---
 
@@ -285,6 +328,111 @@ English accessible to a non-programmer.
 
 ---
 
+### 4.8 Cloze-Deletion Flashcard Engine (derived from HLR-08)
+
+**LLR-24**
+A `FlashcardRecord` dataclass shall be defined in `services/flashcard_service.py` with
+the following fields: `word` (str), `lemma` (str), `sentence` (str — full original
+sentence text), `cloze_sentence` (str — sentence with the target word replaced by
+`"_____"`), `definition` (str, may be empty), `audio_path` (str — absolute MP3 path or
+empty string), `source_file` (str), `page_index` (int).
+*Parent: HLR-08*
+
+**LLR-25**
+The cloze sentence shall be constructed by:
+1. Accessing `token.sent.text` (the spaCy `Span` enclosing sentence).
+2. Replacing the first occurrence of `token.text` with `"_____"` using Python's
+   `str.replace(token.text, "_____", 1)`.
+Before accessing `token.sent`, the code shall verify `doc.has_annotation("SENT_START")`
+to confirm the `fr_core_news_md` parser has segmented sentences (LLR-34).
+*Parent: HLR-08, HLR-06*
+
+**LLR-26**
+A `FlashcardService` class in `services/flashcard_service.py` shall provide:
+- `add_card(word, lemma, sentence, cloze_sentence, source_file, page_index, definition="")`
+  → appends a `FlashcardRecord` and returns it
+- `get_cards()` → returns a copy of the internal list
+- `delete_card(index: int)` → removes by position
+- `clear()` → removes all cards
+- `export_csv(path: str)` → writes Anki-compatible CSV (see LLR-27)
+- `audio_path_for(record)` → returns the canonical MP3 path under the audio directory
+*Parent: HLR-08*
+
+**LLR-27**
+`FlashcardService.export_csv()` shall produce a semicolon-delimited, UTF-8 encoded CSV
+with header `Front;Back;Audio`. Column mapping:
+- `Front` = `record.cloze_sentence`
+- `Back` = `"{record.word} — {record.definition}"` (or just `record.word` if no definition)
+- `Audio` = `[sound:{Path(record.audio_path).name}]` if `record.audio_path` is set, else `""`
+*Parent: HLR-09*
+
+**LLR-28**
+The `FlashcardService` audio output directory shall default to `flashcards/audio/` under
+the project root. The directory shall be created on first use via
+`pathlib.Path.mkdir(parents=True, exist_ok=True)`. The path shall be configurable.
+*Parent: HLR-10, LLR-26*
+
+---
+
+### 4.9 Audio Synthesis and Playback (derived from HLR-10, HLR-04)
+
+**LLR-29**
+An `AudioWorker` class shall subclass `QRunnable`. Constructor arguments: `text` (str),
+`output_path` (str), `lang` (str, default `"fr"`). The `run()` method shall call
+`gTTS(text=text, lang=lang, slow=False).save(output_path)` inside a `try/except`
+block. Results shall be delivered via an `AudioSignals(QObject)` helper with:
+- `finished = pyqtSignal(str, str)` — `(text, output_path)` on success
+- `error = pyqtSignal(str, str)` — `(text, error_message)` on failure
+*Parent: HLR-04, HLR-10*
+
+**LLR-30**
+If `gTTS` raises any exception (e.g. network unavailable), the `AudioWorker` shall catch
+it, emit `error(text, str(exc))`, and leave `record.audio_path` unchanged (empty). The
+flashcard record shall remain valid and exportable; the Anki `Audio` column shall be
+empty for that card. This degraded-mode behaviour shall be documented in `Recreate.md`.
+*Parent: HLR-10, LLR-33 (forward reference)*
+
+**LLR-31**
+An `AudioController` class in `controllers/audio_controller.py` shall:
+- Dispatch `AudioWorker` instances via `QThreadPool.globalInstance().start()`
+- Maintain a dict `{sentence_hash: worker}` to avoid duplicate synthesis for the same text
+- Expose `synthesize(text, output_path)` → dispatches worker
+- Expose `play(path)`, `pause()`, `stop()`, `set_playback_rate(rate: float)` using
+  `QMediaPlayer` + `QAudioOutput`
+- Emit `synthesis_done(text, path)`, `synthesis_error(text, msg)`, `status_message(str)`
+*Parent: HLR-04, HLR-10*
+
+**LLR-32**
+The `StudyGuidePanel` shall store the most recently delivered spaCy Doc in
+`self._current_doc`. When the user right-clicks a row in the verb table or an item in the
+lemma list, a `QMenu` shall appear with "Add to Flashcards". Selecting this option shall
+emit `add_to_flashcard_requested(word: str, lemma: str, sentence: str, cloze: str)`,
+extracting the sentence via `token.sent.text` from the stored Doc.
+*Parent: HLR-08, HLR-03*
+
+**LLR-33**
+A `FlashcardManagerPanel` widget in `views/flashcard_manager.py` shall be added to the
+Dashboard as a new tab in a `QTabWidget`. It shall display all generated cards in a
+`QTableWidget` with columns: `Cloze Sentence`, `Word`, `Lemma`, `Audio`. Buttons shall
+include: `Synthesize Audio`, `Export CSV…`, `Delete Selected`. Audio preview controls
+(Play, Pause, Stop, Speed dropdown) shall be present in a separate control bar.
+*Parent: HLR-08, HLR-09, HLR-10*
+
+**LLR-34**
+Before calling `token.sent`, the system shall verify `doc.has_annotation("SENT_START")`.
+If this returns `False`, the system shall fall back to using the full page/chapter text
+as the sentence (i.e. `cloze_sentence = page_text.replace(token.text, "_____", 1)`).
+*Parent: HLR-06, HLR-08*
+
+**LLR-35**
+`gTTS` shall be listed as a required dependency in `Recreate.md` and installed via
+`pip install gTTS`. The `edge-tts` library shall be documented as an optional
+higher-quality alternative requiring `pip install edge-tts`, with its async invocation
+pattern explained in `Documentation.tex`.
+*Parent: HLR-10*
+
+---
+
 ## 5. GitFlow Workflow Definition
 
 ### 5.1 Branch Taxonomy
@@ -344,6 +492,10 @@ required by DO-178C Section 11 (Software Configuration Management).
 | 6f79c84 | feat | reader | Merge native-readers into develop | HLR-02 | develop |
 | a331a48 | feat | nlp | Corpus worker, heatmap canvas, dashboard controller | HLR-01, LLR-17..20 | feature/dynamic-nlp |
 | 93cd83f | feat | nlp | Merge dynamic-nlp into develop | HLR-01 | develop |
+| 2707406 | docs | req | Add HLR-08..10 and LLR-24..35 (v1.1.0 change baseline) | HLR-08..10 | feature/cloze-flashcard-engine |
+| 391e762 | docs | setup | gTTS dep, edge-tts alternative, cloze-deletion chapter | HLR-07, LLR-22, LLR-23, LLR-35 | feature/cloze-flashcard-engine |
+| 51d4f8c | feat | flashcard | FlashcardService, AudioWorker, AudioController | HLR-08..10, LLR-24..31 | feature/cloze-flashcard-engine |
+| 0080d7f | feat | gui | FlashcardManagerPanel, right-click creation, tab wiring | HLR-08..10, LLR-32..34 | feature/cloze-flashcard-engine |
 
 ---
 
@@ -356,7 +508,12 @@ required by DO-178C Section 11 (Software Configuration Management).
 | LLR-10/11/12 | Code inspection + manual test | GUI remains responsive during NLP processing |
 | LLR-14/15 | Manual test — navigate to page with known verbs | Table shows correct tense/mood for each verb |
 | LLR-17/18 | Manual test — open dashboard for a loaded book | Heatmap visible within the Qt window, no external window |
+| LLR-25 | Manual test — right-click verb in study guide, add card | Card appears with correct cloze blank and source sentence |
+| LLR-27 | Manual test — export CSV, import into Anki test deck | Anki imports without error; Front/Back/Audio columns correct |
+| LLR-29/30 | Manual test — synthesize audio with network disconnected | AudioWorker emits error signal; card Audio column remains empty |
+| LLR-31 | Code inspection + manual test | AudioController plays MP3 without blocking GUI |
+| LLR-33 | Manual test — open Flashcard Manager tab | Table shows all cards; Export and Delete buttons functional |
 
 ---
 
-*End of Requirements.md v1.0.0 — BASELINE*
+*End of Requirements.md v1.1.0 — CHANGE BASELINE (Cloze Flashcard Engine)*
