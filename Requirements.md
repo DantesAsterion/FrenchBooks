@@ -492,6 +492,10 @@ required by DO-178C Section 11 (Software Configuration Management).
 | 6f79c84 | feat | reader | Merge native-readers into develop | HLR-02 | develop |
 | a331a48 | feat | nlp | Corpus worker, heatmap canvas, dashboard controller | HLR-01, LLR-17..20 | feature/dynamic-nlp |
 | 93cd83f | feat | nlp | Merge dynamic-nlp into develop | HLR-01 | develop |
+| 2707406 | docs | req | Add HLR-08..10 and LLR-24..35 (v1.1.0 change baseline) | HLR-08..10 | feature/cloze-flashcard-engine |
+| 391e762 | docs | setup | gTTS dep, edge-tts alternative, cloze-deletion chapter | HLR-07, LLR-22, LLR-23, LLR-35 | feature/cloze-flashcard-engine |
+| 51d4f8c | feat | flashcard | FlashcardService, AudioWorker, AudioController | HLR-08..10, LLR-24..31 | feature/cloze-flashcard-engine |
+| 0080d7f | feat | gui | FlashcardManagerPanel, right-click creation, tab wiring | HLR-08..10, LLR-32..34 | feature/cloze-flashcard-engine |
 
 ---
 
